@@ -362,6 +362,56 @@ body:not(.locked) .auth-screen {
   gap: 12px;
 }
 
+.setup-grid,
+.menu-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.setup-step,
+.menu-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  padding: 14px;
+  color: var(--text);
+  text-align: left;
+  border: 1px solid rgba(218, 232, 255, .12);
+  border-radius: 18px;
+  background: rgba(6, 17, 31, .42);
+}
+
+.setup-step b {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  color: #06111f;
+  background: linear-gradient(135deg, var(--green), var(--cyan));
+}
+
+.setup-step.done {
+  opacity: .72;
+}
+
+.setup-step span,
+.menu-card span {
+  display: grid;
+  gap: 4px;
+}
+
+.setup-step small,
+.menu-card span {
+  color: var(--muted);
+}
+
+.menu-card {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .shortcut,
 .metric {
   min-height: 88px;

@@ -480,6 +480,45 @@ function summary() {
   return { income, expense, cards, fixedPaid, balance: income - expense - cards - fixedPaid };
 }
 
+function upcomingBills() {
+  const fixed = state.fixedBills
+    .filter((bill) => bill.active !== false && !fixedIsPaid(bill))
+    .map((bill) => ({
+      date: dateForDay(bill.dueDay, state.selectedMonth, state.selectedYear),
+      title: bill.description,
+      detail: `${bill.category} - ${bill.person}`,
+      value: bill.value
+    }));
+  const invoices = state.cards
+    .map((card) => {
+      const invoice = cardInvoice(card.name);
+      return {
+        date: dateForDay(card.dueDay, state.selectedMonth, state.selectedYear),
+        title: `Fatura ${card.name}`,
+        detail: invoice.open > 0 ? "Aberta" : "Paga",
+        value: invoice.open
+      };
+    })
+    .filter((item) => item.value > 0);
+  return [...fixed, ...invoices].sort((a, b) => String(a.date).localeCompare(String(b.date))).slice(0, 5);
+}
+
+function invoiceCards() {
+  return state.cards
+    .map((card) => ({ card, invoice: cardInvoice(card.name) }))
+    .filter((item) => item.invoice.amount > 0)
+    .slice(0, 4);
+}
+
+function setupSteps() {
+  return [
+    { done: Number(state.profile.salaryOne || 0) > 0 || Number(state.profile.salaryTwo || 0) > 0, title: "Cadastrar salario", detail: "Informe pelo menos uma renda mensal.", view: "settings" },
+    { done: state.cards.length > 0, title: "Cadastrar cartao", detail: "Adicione limite, fechamento e vencimento.", view: "cards" },
+    { done: state.fixedBills.length > 0 || state.cardFixedBills.length > 0, title: "Adicionar fixos", detail: "Coloque aluguel, internet ou assinatura.", view: "fixed" },
+    { done: state.entries.length > 0 || state.cardPurchases.length > 0, title: "Fazer primeiro lancamento", detail: "Registre uma entrada, saida ou compra.", view: "launch" }
+  ];
+}
+
 function renderHome() {
   const data = summary();
   const mood = data.balance < 0 ? { label: "Atencao", text: "Saldo negativo. Vale revisar os gastos.", face: ":(" } : { label: "OK", text: "Vocês estão indo bem esse mês.", face: ":)" };
@@ -504,6 +543,59 @@ function renderHome() {
       ${metric("Saidas", data.expense + data.fixedPaid)}
       ${metric("Cartoes", data.cards)}
       ${metric("Saldo", data.balance)}
+    </section>
+  `;
+}
+
+function renderHome() {
+  const data = summary();
+  const mood = data.balance < 0 ? { label: "Atencao", text: "Saldo negativo. Vale revisar os gastos.", face: ":(" } : { label: "OK", text: "Voces estao indo bem esse mes.", face: ":)" };
+  const bills = upcomingBills();
+  const invoices = invoiceCards();
+  const steps = setupSteps();
+  const pendingSteps = steps.filter((step) => !step.done);
+  $("#home").innerHTML = `
+    <section class="hero-card wide">
+      <span>Saldo do mes</span>
+      <h2>${brl(data.balance)}</h2>
+      <p>${mood.text}</p>
+      <div class="couple">
+        <div class="faces"><b>${mood.face}</b><b>${mood.face}</b></div>
+        <small>${mood.label}</small>
+      </div>
+    </section>
+    <section class="shortcut-grid wide">
+      <button class="shortcut" data-go="launch"><b>+</b><span>Lancar agora</span></button>
+      <button class="shortcut" data-go="cards"><b>CC</b><span>Ver cartoes</span></button>
+      <button class="shortcut" data-go="fixed"><b>Fx</b><span>Despesas fixas</span></button>
+      <button class="shortcut" data-go="statement"><b>Ex</b><span>Extrato</span></button>
+    </section>
+    <section class="metrics wide">
+      ${metric("Entradas", data.income)}
+      ${metric("Saidas", data.expense + data.fixedPaid)}
+      ${metric("Cartoes", data.cards)}
+      ${metric("Saldo", data.balance)}
+    </section>
+    ${pendingSteps.length ? `
+      <section class="panel wide">
+        <h2>Primeiros passos</h2>
+        <div class="setup-grid">
+          ${steps.map((step) => `
+            <button class="setup-step ${step.done ? "done" : ""}" data-go="${step.view}" type="button">
+              <b>${step.done ? "OK" : "+"}</b>
+              <span><strong>${step.title}</strong><small>${step.detail}</small></span>
+            </button>
+          `).join("")}
+        </div>
+      </section>
+    ` : ""}
+    <section class="panel">
+      <h2>Proximas contas</h2>
+      ${bills.length ? bills.map((item) => row(item.title, `${dateFmt.format(new Date(`${item.date}T00:00:00Z`))} - ${item.detail}`, item.value)).join("") : empty("Nenhuma conta pendente")}
+    </section>
+    <section class="panel">
+      <h2>Faturas do mes</h2>
+      ${invoices.length ? invoices.map(({ card, invoice }) => row(card.name, `Vence dia ${card.dueDay} - aberto ${brl(invoice.open)}`, invoice.amount, `<button class="tiny ghost" data-go="cards" type="button">Abrir</button>`)).join("") : empty("Nenhuma fatura no mes")}
     </section>
   `;
 }
@@ -684,12 +776,14 @@ function renderFixed() {
 
 function addFixed(form) {
   const data = Object.fromEntries(new FormData(form));
+  const value = Number(String(data.value || "").replace(",", "."));
+  if (!data.description || !Number.isFinite(value) || value <= 0) return toast("Preencha a despesa fixa.");
   state.fixedBills.unshift({
     id: crypto.randomUUID(),
     description: data.description,
     category: data.category,
     person: data.person,
-    value: Number(String(data.value || "").replace(",", ".")),
+    value,
     dueDay: Number(data.dueDay || 1),
     paidPeriods: [],
     active: true
@@ -699,13 +793,15 @@ function addFixed(form) {
 
 function addCardFixed(form) {
   const data = Object.fromEntries(new FormData(form));
+  const value = Number(String(data.value || "").replace(",", "."));
   if (!state.cards.length) return toast("Cadastre um cartao primeiro.");
+  if (!data.description || !Number.isFinite(value) || value <= 0) return toast("Preencha o fixo no cartao.");
   state.cardFixedBills.unshift({
     id: crypto.randomUUID(),
     card: data.card,
     description: data.description,
     category: data.category,
-    value: Number(String(data.value || "").replace(",", ".")),
+    value,
     chargeDay: Number(data.chargeDay || 1),
     paidPeriods: [],
     active: true
@@ -724,6 +820,15 @@ function renderStatement() {
 
 function renderSettings() {
   $("#settings").innerHTML = `
+    <section class="panel wide">
+      <h2>Mais</h2>
+      <div class="menu-grid">
+        <button class="menu-card" data-go="launch" type="button"><strong>Lancamentos</strong><span>Entradas, saidas e compras no cartao.</span></button>
+        <button class="menu-card" data-go="cards" type="button"><strong>Cartoes</strong><span>Limites, faturas e vencimentos.</span></button>
+        <button class="menu-card" data-go="fixed" type="button"><strong>Despesas fixas</strong><span>Contas mensais e fixos no cartao.</span></button>
+        <button class="menu-card" data-go="statement" type="button"><strong>Extrato</strong><span>Tudo que entrou no mes escolhido.</span></button>
+      </div>
+    </section>
     <section class="form-card wide">
       <h2 class="form-title">Perfil</h2>
       <form id="profile-form" class="form-card">
@@ -847,7 +952,9 @@ async function onClick(event) {
   if (event.target.closest("[data-signout]")) {
     await db.auth.signOut();
     localStorage.removeItem("duofinV2HouseholdId");
+    localStorage.removeItem("duofinV2InviteCode");
     householdId = "";
+    inviteCode = "";
     user = null;
     renderAuth();
   }
