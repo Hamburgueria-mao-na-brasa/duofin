@@ -20,6 +20,7 @@ body {
   margin: 0;
   min-height: 100vh;
   color: var(--text);
+  color-scheme: dark;
   background:
     radial-gradient(circle at 80% -10%, rgba(24, 200, 255, .28), transparent 32%),
     radial-gradient(circle at 12% 16%, rgba(128, 100, 255, .22), transparent 30%),
@@ -30,6 +31,32 @@ button,
 input,
 select {
   font: inherit;
+}
+
+input,
+select,
+textarea,
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+input,
+select,
+textarea {
+  color-scheme: dark;
+}
+
+select option {
+  color: var(--text);
+  background: #101b2f;
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text);
+  box-shadow: 0 0 0 1000px #17233a inset;
+  caret-color: var(--text);
 }
 
 button {
@@ -117,7 +144,7 @@ body:not(.locked) .auth-screen {
 .brand-logo {
   display: block;
   object-fit: contain;
-  background: #fff;
+  background: linear-gradient(180deg, #ffffff, #eff6fb);
   box-shadow: 0 14px 34px rgba(0, 0, 0, .22);
 }
 
@@ -189,7 +216,7 @@ body:not(.locked) .auth-screen {
   min-height: 54px;
   padding: 0 15px;
   color: var(--text);
-  background: rgba(255, 255, 255, .08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .105), rgba(255, 255, 255, .055));
   border: 1px solid var(--line);
   border-radius: 17px;
   outline: none;
@@ -452,7 +479,9 @@ body:not(.locked) .auth-screen {
 .empty {
   padding: 12px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, .07);
+  color: var(--text);
+  border: 1px solid rgba(218, 232, 255, .1);
+  background: rgba(6, 17, 31, .48);
 }
 
 .bottom-nav {

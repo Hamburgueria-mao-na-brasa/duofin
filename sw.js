@@ -1,4 +1,4 @@
-const CACHE_NAME = "duofin-v2-3";
+const CACHE_NAME = "duofin-v2-4";
 const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json", "./app-icon.svg"];
 
 self.addEventListener("install", (event) => {
