@@ -25,6 +25,45 @@ let sessionTimer = null;
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 
+function userHouseholdKey() {
+  return user?.id ? `duofinV2HouseholdId:${user.id}` : "duofinV2HouseholdId";
+}
+
+function userInviteKey() {
+  return user?.id ? `duofinV2InviteCode:${user.id}` : "duofinV2InviteCode";
+}
+
+function localStateKey() {
+  return householdId ? `duofinV2Local:${householdId}` : "duofinV2Local";
+}
+
+function rememberHousehold() {
+  if (!householdId) return;
+  localStorage.setItem("duofinV2HouseholdId", householdId);
+  localStorage.setItem(userHouseholdKey(), householdId);
+  if (inviteCode) {
+    localStorage.setItem("duofinV2InviteCode", inviteCode);
+    localStorage.setItem(userInviteKey(), inviteCode);
+  }
+}
+
+function hasFinancialData(data) {
+  return ["cards", "entries", "cardPurchases", "fixedBills", "cardFixedBills", "cardPayments", "goals"].some((key) => Array.isArray(data?.[key]) && data[key].length);
+}
+
+function readLocalBackup() {
+  const keys = [localStateKey(), "duofinV2Local"].filter(Boolean);
+  for (const key of keys) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = normalize(JSON.parse(raw));
+      if (hasFinancialData(parsed)) return parsed;
+    } catch (_error) {}
+  }
+  return null;
+}
+
 function emptyState() {
   const now = new Date();
   return {
@@ -424,10 +463,18 @@ async function loadApp() {
   unlockApp(true);
   $("#home").innerHTML = `<section class="panel"><h2>Carregando...</h2><p class="muted">Buscando seu cofre v2.</p></section>`;
   try {
+    householdId = localStorage.getItem(userHouseholdKey()) || localStorage.getItem("duofinV2HouseholdId") || "";
+    inviteCode = localStorage.getItem(userInviteKey()) || localStorage.getItem("duofinV2InviteCode") || "";
     await ensureHousehold();
     const { data, error } = await db.from("duofin_v2_states").select("data").eq("household_id", householdId).maybeSingle();
     if (error) throw error;
     state = normalize(data?.data || {});
+    const localBackup = readLocalBackup();
+    if (!hasFinancialData(state) && localBackup) {
+      state = localBackup;
+      await saveState(true);
+      toast("Dados locais recuperados neste aparelho.");
+    }
     setCurrentPeriod();
     resetSessionTimer();
     render();
@@ -442,7 +489,7 @@ async function ensureHousehold() {
     const { data } = await db.from("duofin_v2_households").select("id, invite_code").eq("id", householdId).maybeSingle();
     if (data?.id) {
       inviteCode = data.invite_code || inviteCode;
-      localStorage.setItem("duofinV2InviteCode", inviteCode);
+      rememberHousehold();
       return;
     }
   }
@@ -451,10 +498,9 @@ async function ensureHousehold() {
   if (error) throw error;
   if (memberships?.[0]?.household_id) {
     householdId = memberships[0].household_id;
-    localStorage.setItem("duofinV2HouseholdId", householdId);
     const { data } = await db.from("duofin_v2_households").select("invite_code").eq("id", householdId).maybeSingle();
     inviteCode = data?.invite_code || inviteCode;
-    localStorage.setItem("duofinV2InviteCode", inviteCode);
+    rememberHousehold();
     return;
   }
 
@@ -471,10 +517,11 @@ async function createHousehold() {
   if (error) throw error;
   householdId = data.id;
   inviteCode = data.invite_code;
-  localStorage.setItem("duofinV2HouseholdId", householdId);
-  localStorage.setItem("duofinV2InviteCode", inviteCode);
-  await db.from("duofin_v2_members").insert({ household_id: householdId, user_id: user.id, role: "owner" });
-  await db.from("duofin_v2_states").insert({ household_id: householdId, data: emptyState() });
+  rememberHousehold();
+  const { error: memberError } = await db.from("duofin_v2_members").insert({ household_id: householdId, user_id: user.id, role: "owner" });
+  if (memberError) throw memberError;
+  const { error: stateError } = await db.from("duofin_v2_states").insert({ household_id: householdId, data: emptyState() });
+  if (stateError) throw stateError;
 }
 
 async function joinHousehold(code) {
@@ -484,8 +531,7 @@ async function joinHousehold(code) {
   if (error) return toast(error.message || "Codigo nao encontrado.");
   householdId = data;
   inviteCode = joinCode;
-  localStorage.setItem("duofinV2HouseholdId", householdId);
-  localStorage.setItem("duofinV2InviteCode", inviteCode);
+  rememberHousehold();
   await loadApp();
 }
 
@@ -497,14 +543,14 @@ async function changeInviteCode() {
   const { error } = await db.from("duofin_v2_households").update({ invite_code: nextCode }).eq("id", householdId);
   if (error) return toast(`Erro ao trocar codigo: ${error.message}`);
   inviteCode = nextCode;
-  localStorage.setItem("duofinV2InviteCode", inviteCode);
+  rememberHousehold();
   showInviteCode = true;
   commit("Codigo de convite atualizado.", "settings");
 }
 
 async function saveState(showToast = false) {
   state = normalize(state);
-  localStorage.setItem("duofinV2Local", JSON.stringify(state));
+  localStorage.setItem(localStateKey(), JSON.stringify(state));
   const { error } = await db.from("duofin_v2_states").upsert({ household_id: householdId, data: state, updated_at: new Date().toISOString() }, { onConflict: "household_id" });
   if (error) return toast(`Erro ao salvar: ${error.message}`);
   lastSaved = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
@@ -1092,6 +1138,7 @@ function renderSettings() {
       </div>
       <div class="settings-grid">
         <button class="menu-card" type="button" data-export-backup><strong>Exportar backup</strong><span>Baixa uma copia dos dados deste cofre.</span></button>
+        ${readLocalBackup() ? `<button class="menu-card" type="button" data-restore-local><strong>Restaurar dados deste aparelho</strong><span>Use se algo sumiu apos entrar na conta.</span></button>` : ""}
         <label class="menu-card file-card">
           <strong>Importar backup</strong>
           <span>Use apenas arquivos exportados pelo DuoFin.</span>
@@ -1232,6 +1279,15 @@ async function onClick(event) {
   }
   if (event.target.closest("[data-export-backup]")) {
     exportBackup();
+    return;
+  }
+  if (event.target.closest("[data-restore-local]")) {
+    const backup = readLocalBackup();
+    if (!backup) return toast("Nenhum backup local encontrado.");
+    if (!confirm("Restaurar os dados salvos neste aparelho para este cofre?")) return;
+    state = normalize(backup);
+    await saveState(true);
+    render();
     return;
   }
   const readNotification = event.target.closest("[data-read-notification]");
