@@ -42,6 +42,10 @@ button {
   display: none;
 }
 
+body:not(.locked) .auth-screen {
+  display: none;
+}
+
 .auth-screen {
   min-height: 100vh;
   display: grid;
@@ -458,7 +462,7 @@ button {
   bottom: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 4px;
   padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
@@ -467,7 +471,7 @@ button {
 }
 
 .nav-item {
-  min-height: 58px;
+  min-height: 56px;
   display: grid;
   place-items: center;
   gap: 3px;
@@ -477,11 +481,11 @@ button {
 }
 
 .nav-item b {
-  font-size: 20px;
+  font-size: 16px;
 }
 
 .nav-item span {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 850;
 }
 
