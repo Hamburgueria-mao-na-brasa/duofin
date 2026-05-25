@@ -363,13 +363,15 @@ body:not(.locked) .auth-screen {
 }
 
 .setup-grid,
-.menu-grid {
+.menu-grid,
+.settings-grid {
   display: grid;
   gap: 10px;
 }
 
 .setup-step,
-.menu-card {
+.menu-card,
+.setting-card {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
@@ -412,6 +414,43 @@ body:not(.locked) .auth-screen {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.setting-card {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+.section-head {
+  display: grid;
+  gap: 4px;
+}
+
+.section-head span {
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.section-head h2 {
+  margin: 0;
+}
+
+.setting-card span,
+.menu-card span {
+  color: var(--muted);
+}
+
+.file-card input {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.danger-card {
+  border-color: rgba(255, 93, 74, .32);
+  background: rgba(255, 93, 74, .12);
+}
+
 .shortcut,
 .metric {
   min-height: 88px;
@@ -421,6 +460,10 @@ body:not(.locked) .auth-screen {
   padding: 16px;
   color: var(--text);
   text-align: left;
+}
+
+.metric[data-go] {
+  cursor: pointer;
 }
 
 .shortcut b {
@@ -532,6 +575,35 @@ body:not(.locked) .auth-screen {
   color: var(--text);
   border: 1px solid rgba(218, 232, 255, .1);
   background: rgba(6, 17, 31, .48);
+}
+
+.invoice-items span {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.invoice-items i {
+  font-style: normal;
+  color: var(--muted);
+}
+
+.invoice-items .tiny {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.couple.good .faces b {
+  background: linear-gradient(135deg, #ffe985, var(--gold));
+}
+
+.couple.warn .faces b {
+  background: linear-gradient(135deg, #ffd27a, #ff8a3d);
+}
+
+.couple.bad .faces b {
+  background: linear-gradient(135deg, #ffb1a6, var(--red));
 }
 
 .bottom-nav {

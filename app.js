@@ -11,6 +11,9 @@ let householdId = localStorage.getItem("duofinV2HouseholdId") || "";
 let inviteCode = localStorage.getItem("duofinV2InviteCode") || "";
 let activeView = "home";
 let launchType = "expense";
+let editingCardId = "";
+let editingPurchaseId = "";
+let showInviteCode = false;
 let state = emptyState();
 let lastSaved = "";
 
@@ -549,7 +552,12 @@ function renderHome() {
 
 function renderHome() {
   const data = summary();
-  const mood = data.balance < 0 ? { label: "Atencao", text: "Saldo negativo. Vale revisar os gastos.", face: ":(" } : { label: "OK", text: "Voces estao indo bem esse mes.", face: ":)" };
+  const tight = data.income > 0 && data.balance <= data.income * 0.12;
+  const mood = data.balance < 0
+    ? { label: "Atencao", text: "Saldo negativo. Vale revisar os gastos.", face: ":(", tone: "bad" }
+    : tight
+      ? { label: "Apertado", text: "O mes esta apertado. Segurem os extras.", face: ":|", tone: "warn" }
+      : { label: "OK", text: "Voces estao indo bem esse mes.", face: ":)", tone: "good" };
   const bills = upcomingBills();
   const invoices = invoiceCards();
   const steps = setupSteps();
@@ -559,7 +567,7 @@ function renderHome() {
       <span>Saldo do mes</span>
       <h2>${brl(data.balance)}</h2>
       <p>${mood.text}</p>
-      <div class="couple">
+      <div class="couple ${mood.tone}">
         <div class="faces"><b>${mood.face}</b><b>${mood.face}</b></div>
         <small>${mood.label}</small>
       </div>
@@ -571,10 +579,10 @@ function renderHome() {
       <button class="shortcut" data-go="statement"><b>Ex</b><span>Extrato</span></button>
     </section>
     <section class="metrics wide">
-      ${metric("Entradas", data.income)}
-      ${metric("Saidas", data.expense + data.fixedPaid)}
-      ${metric("Cartoes", data.cards)}
-      ${metric("Saldo", data.balance)}
+      ${metric("Entradas", data.income, "launch")}
+      ${metric("Saidas", data.expense + data.fixedPaid, "statement")}
+      ${metric("Cartoes", data.cards, "cards")}
+      ${metric("Saldo", data.balance, "statement")}
     </section>
     ${pendingSteps.length ? `
       <section class="panel wide">
@@ -600,12 +608,14 @@ function renderHome() {
   `;
 }
 
-function metric(label, value) {
-  return `<article class="metric"><span>${label}</span><strong>${brl(value)}</strong></article>`;
+function metric(label, value, go = "") {
+  return `<article class="metric" ${go ? `data-go="${go}"` : ""}><span>${label}</span><strong>${brl(value)}</strong></article>`;
 }
 
 function renderLaunch() {
+  if (editingPurchaseId) launchType = "expense";
   const isIncome = launchType === "income";
+  const editingPurchase = state.cardPurchases.find((purchase) => purchase.id === editingPurchaseId);
   $("#launch").innerHTML = `
     <section class="form-card wide">
       <h2 class="form-title">Lancamentos</h2>
@@ -624,18 +634,19 @@ function renderLaunch() {
       </form>
     </section>
 
-    <section class="form-card wide">
-      <h2 class="form-title">Compra no cartao</h2>
+    ${!isIncome ? `<section class="form-card wide">
+      <h2 class="form-title">${editingPurchase ? "Editar compra no cartao" : "Compra no cartao"}</h2>
       <form id="card-purchase-form" class="form-card">
-        ${state.cards.length ? select("card", "Cartao", cardNames()) : `<div class="empty"><strong>Nenhum cartao cadastrado</strong><span>Cadastre um cartao primeiro.</span></div>`}
-        ${input("date", "Data da compra", "date", today(), "required")}
-        ${input("description", "Descricao", "text", "", "required")}
-        ${select("category", "Categoria", state.categoriesExpense)}
-        ${input("value", "Valor total", "number", "", "step=\"0.01\" inputmode=\"decimal\" required")}
-        ${input("parts", "Parcelas", "number", "1", "min=\"1\" step=\"1\" required")}
-        <button class="primary" type="submit" ${state.cards.length ? "" : "disabled"}>Salvar compra</button>
+        ${state.cards.length ? select("card", "Cartao", cardNames(), editingPurchase?.card || "") : `<div class="empty"><strong>Nenhum cartao cadastrado</strong><span>Cadastre um cartao primeiro.</span></div>`}
+        ${input("date", "Data da compra", "date", editingPurchase?.date || today(), "required")}
+        ${input("description", "Descricao", "text", editingPurchase?.description || "", "required")}
+        ${select("category", "Categoria", state.categoriesExpense, editingPurchase?.category || "")}
+        ${input("value", "Valor total", "number", editingPurchase?.value || "", "step=\"0.01\" inputmode=\"decimal\" required")}
+        ${input("parts", "Parcelas", "number", editingPurchase?.parts || "1", "min=\"1\" step=\"1\" required")}
+        <button class="primary" type="submit" ${state.cards.length ? "" : "disabled"}>${editingPurchase ? "Salvar alteracoes" : "Salvar compra"}</button>
+        ${editingPurchase ? `<button class="ghost" type="button" data-cancel-purchase-edit>Cancelar edicao</button>` : ""}
       </form>
-    </section>
+    </section>` : ""}
   `;
 }
 
@@ -665,8 +676,8 @@ function addCardPurchase(form) {
   if (!state.cards.length) return toast("Cadastre um cartao primeiro.");
   if (!Number.isFinite(value) || value <= 0) return toast("Informe um valor valido.");
   const invoice = invoiceFor(data.date, data.card);
-  state.cardPurchases.unshift({
-    id: crypto.randomUUID(),
+  const nextPurchase = {
+    id: editingPurchaseId || crypto.randomUUID(),
     card: data.card,
     date: data.date,
     firstMonth: invoice.month,
@@ -676,21 +687,32 @@ function addCardPurchase(form) {
     value,
     parts: Math.max(1, Number(data.parts || 1)),
     paidPeriods: []
-  });
+  };
+  if (editingPurchaseId) {
+    const old = state.cardPurchases.find((purchase) => purchase.id === editingPurchaseId);
+    nextPurchase.paidPeriods = old?.paidPeriods || [];
+    state.cardPurchases = state.cardPurchases.map((purchase) => purchase.id === editingPurchaseId ? nextPurchase : purchase);
+    editingPurchaseId = "";
+    commit("Compra atualizada.");
+    return;
+  }
+  state.cardPurchases.unshift(nextPurchase);
   commit("Compra no cartao salva.");
 }
 
 function renderCards() {
+  const editing = state.cards.find((card) => card.id === editingCardId);
   $("#cards").innerHTML = `
     <section class="form-card wide">
-      <h2 class="form-title">Novo cartao</h2>
+      <h2 class="form-title">${editing ? "Editar cartao" : "Novo cartao"}</h2>
       <form id="card-form" class="form-card">
-        ${input("name", "Nome do cartao", "text", "", "required")}
-        ${select("owner", "Titular", people())}
-        ${input("limit", "Limite", "number", "", "step=\"0.01\" inputmode=\"decimal\" required")}
-        ${input("closeDay", "Fecha dia", "number", "20", "min=\"1\" max=\"31\" required")}
-        ${input("dueDay", "Vence dia", "number", "10", "min=\"1\" max=\"31\" required")}
-        <button class="primary" type="submit">Salvar cartao</button>
+        ${input("name", "Nome do cartao", "text", editing?.name || "", "required")}
+        ${select("owner", "Titular", people(), editing?.owner || "")}
+        ${input("limit", "Limite", "number", editing?.limit || "", "step=\"0.01\" inputmode=\"decimal\" required")}
+        ${input("closeDay", "Fecha dia", "number", editing?.closeDay || "20", "min=\"1\" max=\"31\" required")}
+        ${input("dueDay", "Vence dia", "number", editing?.dueDay || "10", "min=\"1\" max=\"31\" required")}
+        <button class="primary" type="submit">${editing ? "Salvar alteracoes" : "Salvar cartao"}</button>
+        ${editing ? `<button class="ghost" type="button" data-cancel-card-edit>Cancelar edicao</button>` : ""}
       </form>
     </section>
     <section class="wide">${state.cards.length ? state.cards.map(cardHtml).join("") : empty("Nenhum cartao cadastrado")}</section>
@@ -717,11 +739,18 @@ function cardHtml(card) {
         <span>Vence</span><b>dia ${card.dueDay}</b>
       </div>
       <div class="actions">
+        <button class="tiny ghost" data-edit-card="${card.id}">Editar</button>
         <button class="tiny ghost" data-pay-card="${card.name}">Pagar fatura</button>
         <button class="tiny danger" data-delete-card="${card.id}">Excluir</button>
       </div>
       <div class="invoice-items">
-        ${invoice.items.length ? invoice.items.map((item) => `<span>${item.description} - ${item.source === "purchase" ? `${item.part}/${item.parts}` : "fixo"} <b>${brl(item.value)}</b></span>`).join("") : `<span>Nenhuma compra nesta fatura.</span>`}
+        ${invoice.items.length ? invoice.items.map((item) => `
+          <span>
+            <i>${item.description} - ${item.source === "purchase" ? `${item.part}/${item.parts}` : "fixo"}</i>
+            <b>${brl(item.value)}</b>
+            ${item.source === "purchase" ? `<button class="tiny ghost" data-edit-purchase="${item.id}" type="button">Editar</button>` : ""}
+          </span>
+        `).join("") : `<span>Nenhuma compra nesta fatura.</span>`}
       </div>
     </article>
   `;
@@ -731,14 +760,27 @@ function addCard(form) {
   const data = Object.fromEntries(new FormData(form));
   const limit = Number(String(data.limit || "").replace(",", "."));
   if (!data.name || !Number.isFinite(limit)) return toast("Preencha os dados do cartao.");
-  state.cards.unshift({
-    id: crypto.randomUUID(),
+  const nextCard = {
+    id: editingCardId || crypto.randomUUID(),
     name: data.name,
     owner: data.owner,
     limit,
     closeDay: Number(data.closeDay || 20),
     dueDay: Number(data.dueDay || 10)
-  });
+  };
+  if (editingCardId) {
+    const oldCard = state.cards.find((card) => card.id === editingCardId);
+    state.cards = state.cards.map((card) => card.id === editingCardId ? nextCard : card);
+    if (oldCard && oldCard.name !== nextCard.name) {
+      state.cardPurchases = state.cardPurchases.map((purchase) => same(purchase.card, oldCard.name) ? { ...purchase, card: nextCard.name } : purchase);
+      state.cardFixedBills = state.cardFixedBills.map((bill) => same(bill.card, oldCard.name) ? { ...bill, card: nextCard.name } : bill);
+      state.cardPayments = state.cardPayments.map((payment) => same(payment.card, oldCard.name) ? { ...payment, card: nextCard.name } : payment);
+    }
+    editingCardId = "";
+    commit("Cartao atualizado.");
+    return;
+  }
+  state.cards.unshift(nextCard);
   commit("Cartao salvo.");
 }
 
@@ -821,7 +863,10 @@ function renderStatement() {
 function renderSettings() {
   $("#settings").innerHTML = `
     <section class="panel wide">
-      <h2>Mais</h2>
+      <div class="section-head">
+        <span>Central do app</span>
+        <h2>Mais</h2>
+      </div>
       <div class="menu-grid">
         <button class="menu-card" data-go="launch" type="button"><strong>Lancamentos</strong><span>Entradas, saidas e compras no cartao.</span></button>
         <button class="menu-card" data-go="cards" type="button"><strong>Cartoes</strong><span>Limites, faturas e vencimentos.</span></button>
@@ -830,7 +875,10 @@ function renderSettings() {
       </div>
     </section>
     <section class="form-card wide">
-      <h2 class="form-title">Perfil</h2>
+      <div class="section-head">
+        <span>Casal e renda</span>
+        <h2 class="form-title">Perfil</h2>
+      </div>
       <form id="profile-form" class="form-card">
         ${input("personOne", "Pessoa 1", "text", state.profile.personOne)}
         ${input("salaryOne", "Salario pessoa 1", "number", state.profile.salaryOne, "step=\"0.01\"")}
@@ -842,16 +890,59 @@ function renderSettings() {
       </form>
     </section>
     <section class="panel wide">
-      <h2>Conectar companheiro</h2>
-      <p class="muted">Codigo do cofre: <strong>${inviteCode || "-"}</strong></p>
+      <div class="section-head">
+        <span>Compartilhamento</span>
+        <h2>Conectar companheiro</h2>
+      </div>
+      <div class="settings-grid">
+        <div class="setting-card">
+          <strong>Codigo do cofre</strong>
+          <span>${showInviteCode ? inviteCode || "-" : "Toque para mostrar"}</span>
+          <div class="actions">
+            <button class="tiny ghost" type="button" data-toggle-code>${showInviteCode ? "Ocultar" : "Mostrar codigo"}</button>
+            <button class="tiny ghost" type="button" data-copy-code>Copiar</button>
+          </div>
+        </div>
+        <div class="setting-card">
+          <strong>Pessoas conectadas</strong>
+          <span>Este cofre e compartilhado por codigo.</span>
+        </div>
+      </div>
       <form id="join-form" class="form-card">
         ${input("code", "Entrar com codigo", "text", "", "autocomplete=\"off\"")}
         <button class="primary" type="submit">Conectar</button>
       </form>
-      <button class="danger" type="button" data-signout>Sair da conta</button>
     </section>
     <section class="panel wide">
-      <h2>Diagnostico</h2>
+      <div class="section-head">
+        <span>Instalacao</span>
+        <h2>Usar como app</h2>
+      </div>
+      <div class="settings-grid">
+        <div class="setting-card"><strong>Android</strong><span>No Chrome, toque nos tres pontos e escolha Instalar app ou Adicionar a tela inicial.</span></div>
+        <div class="setting-card"><strong>iPhone</strong><span>No Safari, toque em Compartilhar e depois Adicionar a Tela de Inicio.</span></div>
+      </div>
+    </section>
+    <section class="panel wide">
+      <div class="section-head">
+        <span>Seguranca</span>
+        <h2>Backup e conta</h2>
+      </div>
+      <div class="settings-grid">
+        <button class="menu-card" type="button" data-export-backup><strong>Exportar backup</strong><span>Baixa uma copia dos dados deste cofre.</span></button>
+        <label class="menu-card file-card">
+          <strong>Importar backup</strong>
+          <span>Use apenas arquivos exportados pelo DuoFin.</span>
+          <input id="backup-file" type="file" accept="application/json">
+        </label>
+        <button class="menu-card danger-card" type="button" data-signout><strong>Sair da conta</strong><span>Fecha a sessao neste aparelho.</span></button>
+      </div>
+    </section>
+    <section class="panel wide">
+      <div class="section-head">
+        <span>Diagnostico</span>
+        <h2>Resumo tecnico</h2>
+      </div>
       ${row("Cofre v2", householdId || "nao carregado", 0)}
       ${row("Dados", `Cartoes ${state.cards.length} - Lancamentos ${state.entries.length} - Compras ${state.cardPurchases.length}`, 0)}
     </section>
@@ -869,6 +960,38 @@ function saveProfile(form) {
     salaryDayTwo: Number(data.salaryDayTwo || 5)
   };
   commit("Perfil salvo.");
+}
+
+function exportBackup() {
+  const payload = {
+    app: "DuoFin",
+    version: 2,
+    exportedAt: new Date().toISOString(),
+    data: state
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `duofin-backup-${today()}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+  toast("Backup exportado.");
+}
+
+async function importBackup(file) {
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const payload = JSON.parse(text);
+    const imported = payload?.data || payload;
+    if (!imported || typeof imported !== "object") throw new Error("Arquivo invalido");
+    state = normalize(imported);
+    await saveState(true);
+    render();
+  } catch (error) {
+    toast(`Backup invalido: ${error.message}`);
+  }
 }
 
 function input(name, label, type = "text", value = "", attrs = "") {
@@ -931,6 +1054,20 @@ async function onClick(event) {
   }
   if (event.target.closest("[data-signup]")) signup();
   if (event.target.closest("[data-reset]")) resetPassword();
+  if (event.target.closest("[data-toggle-code]")) {
+    showInviteCode = !showInviteCode;
+    renderSettings();
+    return;
+  }
+  if (event.target.closest("[data-copy-code]")) {
+    if (!inviteCode) return toast("Codigo ainda nao carregado.");
+    navigator.clipboard?.writeText(inviteCode).then(() => toast("Codigo copiado.")).catch(() => toast("Nao foi possivel copiar."));
+    return;
+  }
+  if (event.target.closest("[data-export-backup]")) {
+    exportBackup();
+    return;
+  }
   const payCard = event.target.closest("[data-pay-card]");
   if (payCard) {
     const card = payCard.dataset.payCard;
@@ -939,9 +1076,35 @@ async function onClick(event) {
     state.cardPayments.unshift({ id: crypto.randomUUID(), card, month: state.selectedMonth, year: state.selectedYear, value: invoice.open, date: today() });
     commit("Pagamento da fatura salvo.");
   }
+  const editCard = event.target.closest("[data-edit-card]");
+  if (editCard) {
+    editingCardId = editCard.dataset.editCard;
+    renderCards();
+    setView("cards");
+    return;
+  }
+  if (event.target.closest("[data-cancel-card-edit]")) {
+    editingCardId = "";
+    renderCards();
+    return;
+  }
+  const editPurchase = event.target.closest("[data-edit-purchase]");
+  if (editPurchase) {
+    editingPurchaseId = editPurchase.dataset.editPurchase;
+    launchType = "expense";
+    renderLaunch();
+    setView("launch");
+    return;
+  }
+  if (event.target.closest("[data-cancel-purchase-edit]")) {
+    editingPurchaseId = "";
+    renderLaunch();
+    return;
+  }
   const deleteCard = event.target.closest("[data-delete-card]");
   if (deleteCard && confirm("Excluir cartao?")) {
     state.cards = state.cards.filter((card) => card.id !== deleteCard.dataset.deleteCard);
+    if (editingCardId === deleteCard.dataset.deleteCard) editingCardId = "";
     commit("Cartao excluido.");
   }
   const toggleFixed = event.target.closest("[data-toggle-fixed]");
@@ -969,6 +1132,10 @@ function togglePeriod(item) {
 }
 
 function onChange(event) {
+  if (event.target.id === "backup-file") {
+    importBackup(event.target.files?.[0]);
+    event.target.value = "";
+  }
   if (event.target.id === "month-select") {
     state.selectedMonth = event.target.value;
     render();
