@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="DuoFin">
+  <defs>
+    <linearGradient id="navy" x1="74" x2="250" y1="110" y2="402" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#083c76"/>
+      <stop offset="1" stop-color="#061a36"/>
+    </linearGradient>
+    <linearGradient id="aqua" x1="230" x2="430" y1="128" y2="368" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22d7b8"/>
+      <stop offset=".55" stop-color="#12bfa3"/>
+      <stop offset="1" stop-color="#067f78"/>
+    </linearGradient>
+    <linearGradient id="tile" x1="86" x2="426" y1="66" y2="446" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#eef4f8"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#06111f" flood-opacity=".18"/>
+    </filter>
+  </defs>
+
+  <rect x="58" y="58" width="396" height="396" rx="88" fill="url(#tile)" filter="url(#shadow)"/>
+
+  <g transform="translate(68 102)">
+    <path fill="url(#navy)" d="M34 0h111c92 0 154 61 154 151S237 302 145 302H34V0Zm80 75v152h31c47 0 74-30 74-76s-27-76-74-76h-31Z"/>
+    <path fill="url(#aqua)" d="M244 0h164l-20 75H287c-25 0-43 10-58 31l-36 51c-16 22-34 38-56 48v-74c10-6 19-16 29-30l39-55C216 17 232 0 244 0Zm29 128h115l-19 72H273v102h-80V191c25-10 43-26 58-47l22-16Z"/>
+    <path fill="#18c7a8" d="M94 204h24v38H94v-38Zm38-32h24v70h-24v-70Zm39-34h24v104h-24V138Z"/>
+  </g>
+</svg>

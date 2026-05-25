@@ -1,0 +1,15 @@
+{
+  "name": "DuoFin v2",
+  "short_name": "DuoFin",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#06111f",
+  "theme_color": "#06111f",
+  "icons": [
+    {
+      "src": "app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
