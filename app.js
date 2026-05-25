@@ -312,7 +312,8 @@ function cardUsedLimit(cardName) {
     .flatMap(purchaseParts)
     .filter((part) => !part.paid);
   const fixed = state.cardFixedBills.filter((bill) => same(bill.card, cardName) && bill.active !== false);
-  return total(openPurchases) + total(fixed);
+  const payments = state.cardPayments.filter((payment) => same(payment.card, cardName));
+  return Math.max(0, total(openPurchases) + total(fixed) - total(payments));
 }
 
 function fixedIsPaid(bill) {
@@ -565,7 +566,7 @@ function addNotification(message, view = activeView) {
     message,
     view,
     createdAt: new Date().toISOString(),
-    readBy: user?.id ? [user.id] : []
+    readBy: []
   });
   state.notifications = state.notifications.slice(0, 30);
 }
@@ -672,34 +673,6 @@ function setupSteps() {
 function unreadNotifications() {
   const uid = user?.id || "";
   return (state.notifications || []).filter((item) => !uid || !(item.readBy || []).includes(uid)).slice(0, 5);
-}
-
-function renderHome() {
-  const data = summary();
-  const mood = data.balance < 0 ? { label: "Atencao", text: "Saldo negativo. Vale revisar os gastos.", face: ":(" } : { label: "OK", text: "Vocês estão indo bem esse mês.", face: ":)" };
-  $("#home").innerHTML = `
-    <section class="hero-card wide">
-      <span>Saldo do mes</span>
-      <h2>${brl(data.balance)}</h2>
-      <p>${mood.text}</p>
-      <div class="couple">
-        <div class="faces"><b>${mood.face}</b><b>${mood.face}</b></div>
-        <small>${mood.label}</small>
-      </div>
-    </section>
-    <section class="shortcut-grid wide">
-      <button class="shortcut" data-go="launch"><b>+</b><span>Lancar agora</span></button>
-      <button class="shortcut" data-go="cards"><b>□</b><span>Ver cartoes</span></button>
-      <button class="shortcut" data-go="fixed"><b>◷</b><span>Despesas fixas</span></button>
-      <button class="shortcut" data-go="statement"><b>☷</b><span>Extrato</span></button>
-    </section>
-    <section class="metrics wide">
-      ${metric("Entradas", data.income)}
-      ${metric("Saidas", data.expense + data.fixedPaid)}
-      ${metric("Cartoes", data.cards)}
-      ${metric("Saldo", data.balance)}
-    </section>
-  `;
 }
 
 function renderHome() {
