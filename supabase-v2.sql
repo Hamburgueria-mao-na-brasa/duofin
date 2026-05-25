@@ -22,6 +22,11 @@ create table if not exists public.duofin_v2_states (
   updated_at timestamptz not null default now()
 );
 
+grant usage on schema public to anon, authenticated;
+grant select, insert, update on public.duofin_v2_households to authenticated;
+grant select, insert, update on public.duofin_v2_members to authenticated;
+grant select, insert, update on public.duofin_v2_states to authenticated;
+
 alter table public.duofin_v2_households enable row level security;
 alter table public.duofin_v2_members enable row level security;
 alter table public.duofin_v2_states enable row level security;
@@ -98,6 +103,41 @@ to authenticated
 using (public.duofin_v2_is_member(household_id))
 with check (public.duofin_v2_is_member(household_id));
 
+create or replace function public.duofin_v2_bootstrap_household()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.duofin_v2_members (household_id, user_id, role)
+  values (new.id, new.created_by, 'owner')
+  on conflict (household_id, user_id) do nothing;
+
+  insert into public.duofin_v2_states (household_id, data)
+  values (new.id, '{}'::jsonb)
+  on conflict (household_id) do nothing;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists duofin_v2_after_household_create on public.duofin_v2_households;
+create trigger duofin_v2_after_household_create
+after insert on public.duofin_v2_households
+for each row
+execute function public.duofin_v2_bootstrap_household();
+
+insert into public.duofin_v2_members (household_id, user_id, role)
+select id, created_by, 'owner'
+from public.duofin_v2_households
+on conflict (household_id, user_id) do nothing;
+
+insert into public.duofin_v2_states (household_id, data)
+select id, '{}'::jsonb
+from public.duofin_v2_households
+on conflict (household_id) do nothing;
+
 create or replace function public.duofin_v2_join_by_code(join_code text)
 returns uuid
 language plpgsql
@@ -124,3 +164,5 @@ end;
 $$;
 
 grant execute on function public.duofin_v2_join_by_code(text) to authenticated;
+grant execute on function public.duofin_v2_is_member(uuid) to authenticated;
+grant execute on function public.duofin_v2_bootstrap_household() to authenticated;
