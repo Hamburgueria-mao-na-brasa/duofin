@@ -7,7 +7,7 @@
     <title>DuoFin v2</title>
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="app-icon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="styles.css?v=7">
+    <link rel="stylesheet" href="styles.css?v=8">
   </head>
   <body class="locked" data-view="home">
     <section id="auth" class="auth-screen"></section>
@@ -20,7 +20,7 @@
             <strong>DuoFin</strong>
             <small>Controle compartilhado</small>
           </div>
-          <button id="settings-open" class="icon-button" type="button" aria-label="Configuracoes">Config</button>
+          <button id="settings-open" class="icon-button" type="button" aria-label="Ocultar valores">Ver</button>
         </div>
         <div class="period-row">
           <label>
@@ -52,8 +52,9 @@
     </nav>
 
     <div id="toast" class="toast" hidden></div>
+    <button id="privacy-toggle" class="privacy-toggle" type="button">Ver</button>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="app.js?v=7"></script>
+    <script src="app.js?v=8"></script>
   </body>
 </html>

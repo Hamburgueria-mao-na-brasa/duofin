@@ -73,6 +73,10 @@ body:not(.locked) .auth-screen {
   display: none;
 }
 
+.locked .privacy-toggle {
+  display: none;
+}
+
 .auth-screen {
   min-height: 100vh;
   display: grid;
@@ -334,26 +338,93 @@ body:not(.locked) .auth-screen {
   gap: 5px;
 }
 
-.faces {
-  display: flex;
-}
-
-.faces b {
-  width: 44px;
-  height: 44px;
-  display: grid;
-  place-items: center;
-  margin-left: -8px;
-  border-radius: 999px;
-  color: #06111f;
-  background: linear-gradient(135deg, #ffe985, var(--gold));
-}
-
 .couple small {
   font-size: 12px;
   font-weight: 900;
   text-transform: uppercase;
 }
+
+.couple-people {
+  position: relative;
+  width: 112px;
+  height: 78px;
+}
+
+.person {
+  position: absolute;
+  bottom: 0;
+  width: 48px;
+  height: 54px;
+  border-radius: 24px 24px 14px 14px;
+  background: linear-gradient(135deg, var(--green), var(--cyan));
+}
+
+.person.one {
+  left: 12px;
+  background: linear-gradient(135deg, var(--cyan), var(--blue));
+}
+
+.person.two {
+  right: 12px;
+  background: linear-gradient(135deg, var(--green), var(--violet));
+}
+
+.person::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: -28px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #ffd88a;
+  box-shadow: inset -8px 8px 0 rgba(255, 255, 255, .18);
+}
+
+.person i {
+  position: absolute;
+  left: 17px;
+  top: -10px;
+  width: 18px;
+  height: 8px;
+  border-bottom: 3px solid #06111f;
+  border-radius: 0 0 18px 18px;
+}
+
+.couple.warn .person i {
+  height: 0;
+  border-radius: 0;
+}
+
+.couple.bad .person i {
+  top: -4px;
+  border-bottom: 0;
+  border-top: 3px solid #06111f;
+  border-radius: 18px 18px 0 0;
+}
+
+.heart {
+  position: absolute;
+  left: 48px;
+  top: 18px;
+  width: 18px;
+  height: 18px;
+  transform: rotate(45deg);
+  background: var(--gold);
+}
+
+.heart::before,
+.heart::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: inherit;
+}
+
+.heart::before { left: -9px; }
+.heart::after { top: -9px; }
 
 .shortcut-grid,
 .metrics {
@@ -451,6 +522,26 @@ body:not(.locked) .auth-screen {
   background: rgba(255, 93, 74, .12);
 }
 
+.notification-list {
+  display: grid;
+  gap: 10px;
+}
+
+.notification-item {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  color: var(--text);
+  text-align: left;
+  border: 1px solid rgba(33, 230, 173, .22);
+  border-radius: 18px;
+  background: rgba(33, 230, 173, .1);
+}
+
+.notification-item span {
+  color: var(--muted);
+}
+
 .shortcut,
 .metric {
   min-height: 88px;
@@ -460,6 +551,10 @@ body:not(.locked) .auth-screen {
   padding: 16px;
   color: var(--text);
   text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: var(--panel);
+  box-shadow: 0 20px 56px rgba(0, 0, 0, .24);
 }
 
 .metric[data-go] {
@@ -594,18 +689,6 @@ body:not(.locked) .auth-screen {
   justify-self: start;
 }
 
-.couple.good .faces b {
-  background: linear-gradient(135deg, #ffe985, var(--gold));
-}
-
-.couple.warn .faces b {
-  background: linear-gradient(135deg, #ffd27a, #ff8a3d);
-}
-
-.couple.bad .faces b {
-  background: linear-gradient(135deg, #ffb1a6, var(--red));
-}
-
 .bottom-nav {
   position: fixed;
   left: 0;
@@ -657,6 +740,22 @@ body:not(.locked) .auth-screen {
   background: rgba(18, 31, 55, .96);
   box-shadow: 0 18px 50px rgba(0, 0, 0, .32);
   font-weight: 850;
+}
+
+.privacy-toggle {
+  position: fixed;
+  right: 16px;
+  bottom: 104px;
+  z-index: 28;
+  min-width: 64px;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  color: #06111f;
+  background: linear-gradient(135deg, var(--green), var(--cyan), var(--blue));
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .32);
+  font-weight: 900;
 }
 
 @media (min-width: 780px) {

@@ -13,9 +13,14 @@ let activeView = "home";
 let launchType = "expense";
 let editingCardId = "";
 let editingPurchaseId = "";
+let editingEntryId = "";
+let editingFixedId = "";
+let editingCardFixedId = "";
 let showInviteCode = false;
+let valuesHidden = localStorage.getItem("duofinV2HideValues") === "1";
 let state = emptyState();
 let lastSaved = "";
+let sessionTimer = null;
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -42,14 +47,15 @@ function emptyState() {
     fixedBills: [],
     cardFixedBills: [],
     cardPayments: [],
-    goals: []
+    goals: [],
+    notifications: []
   };
 }
 
 function normalize(raw) {
   const clean = { ...emptyState(), ...(raw && typeof raw === "object" ? raw : {}) };
   clean.profile = { ...emptyState().profile, ...(clean.profile || {}) };
-  ["accounts", "cards", "entries", "cardPurchases", "fixedBills", "cardFixedBills", "cardPayments", "goals"].forEach((key) => {
+  ["accounts", "cards", "entries", "cardPurchases", "fixedBills", "cardFixedBills", "cardPayments", "goals", "notifications"].forEach((key) => {
     clean[key] = Array.isArray(clean[key]) ? clean[key] : [];
   });
   clean.categoriesIncome = Array.isArray(clean.categoriesIncome) && clean.categoriesIncome.length ? clean.categoriesIncome : emptyState().categoriesIncome;
@@ -119,6 +125,13 @@ function normalize(raw) {
     value: Number(payment.value || 0),
     date: payment.date || today()
   }));
+  clean.notifications = clean.notifications.map((item) => ({
+    id: item.id || crypto.randomUUID(),
+    message: item.message || "Atualizacao no cofre",
+    view: item.view || "home",
+    createdAt: item.createdAt || new Date().toISOString(),
+    readBy: Array.isArray(item.readBy) ? item.readBy : []
+  }));
   return clean;
 }
 
@@ -146,6 +159,7 @@ function same(left, right) {
 }
 
 function brl(value) {
+  if (valuesHidden) return "R$ ***";
   return money.format(Number(value || 0));
 }
 
@@ -242,6 +256,17 @@ function cardInvoice(cardName) {
   return { items, amount, paid: Math.min(amount, paidByMark + paidByPayment), open: Math.max(0, amount - paidByMark - paidByPayment) };
 }
 
+function cardAffectsBalance(card) {
+  const now = new Date();
+  const selectedMonth = monthIndex(state.selectedMonth);
+  const selectedYear = Number(state.selectedYear);
+  if (selectedYear < now.getFullYear()) return true;
+  if (selectedYear > now.getFullYear()) return false;
+  if (selectedMonth < now.getMonth()) return true;
+  if (selectedMonth > now.getMonth()) return false;
+  return now.getDate() >= Number(card.closeDay || 20);
+}
+
 function cardUsedLimit(cardName) {
   const openPurchases = state.cardPurchases
     .filter((purchase) => same(purchase.card, cardName))
@@ -283,15 +308,61 @@ function bindEvents() {
   document.addEventListener("submit", onSubmit);
   document.addEventListener("click", onClick);
   document.addEventListener("change", onChange);
-  $("#settings-open").addEventListener("click", () => setView("settings"));
+  $("#settings-open")?.addEventListener("click", toggleValues);
+  $("#privacy-toggle")?.addEventListener("click", toggleValues);
+  ["click", "keydown", "touchstart", "scroll"].forEach((eventName) => document.addEventListener(eventName, resetSessionTimer, { passive: true }));
 }
 
 function unlockApp(unlocked) {
   document.body.classList.toggle("locked", !unlocked);
 }
 
+function updatePrivacyButtons() {
+  const label = valuesHidden ? "Mostrar" : "Ocultar";
+  $("#settings-open") && ($("#settings-open").textContent = valuesHidden ? "Ver" : "Priv");
+  $("#privacy-toggle") && ($("#privacy-toggle").textContent = label);
+  document.body.classList.toggle("hide-values", valuesHidden);
+}
+
+function toggleValues() {
+  valuesHidden = !valuesHidden;
+  localStorage.setItem("duofinV2HideValues", valuesHidden ? "1" : "0");
+  render();
+  updatePrivacyButtons();
+}
+
+function resetSessionTimer() {
+  if (!user) return;
+  clearTimeout(sessionTimer);
+  sessionTimer = setTimeout(() => hardSignOut("Sessao encerrada apos 10 minutos sem uso."), 10 * 60 * 1000);
+}
+
+function setCurrentPeriod() {
+  const now = new Date();
+  state.selectedMonth = months[now.getMonth()];
+  state.selectedYear = now.getFullYear();
+}
+
+async function hardSignOut(message = "Entre novamente para continuar.") {
+  try {
+    await db?.auth?.signOut();
+  } catch (_error) {}
+  Object.keys(localStorage).forEach((key) => {
+    if (key.startsWith("sb-") || key.startsWith("duofinV2HouseholdId") || key.startsWith("duofinV2InviteCode")) localStorage.removeItem(key);
+  });
+  clearTimeout(sessionTimer);
+  householdId = "";
+  inviteCode = "";
+  user = null;
+  activeView = "home";
+  unlockApp(false);
+  renderAuth(message);
+}
+
 function renderAuth(message = "") {
   unlockApp(false);
+  clearTimeout(sessionTimer);
+  updatePrivacyButtons();
   $("#auth").innerHTML = `
     <article class="auth-card">
       <div class="auth-hero">
@@ -357,6 +428,8 @@ async function loadApp() {
     const { data, error } = await db.from("duofin_v2_states").select("data").eq("household_id", householdId).maybeSingle();
     if (error) throw error;
     state = normalize(data?.data || {});
+    setCurrentPeriod();
+    resetSessionTimer();
     render();
   } catch (error) {
     console.error(error);
@@ -416,26 +489,53 @@ async function joinHousehold(code) {
   await loadApp();
 }
 
+async function changeInviteCode() {
+  const custom = prompt("Novo codigo do cofre. Deixe vazio para gerar automatico:");
+  if (custom === null) return;
+  const nextCode = String(custom || newInviteCode()).trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+  if (nextCode.length < 4) return toast("Use pelo menos 4 letras ou numeros.");
+  const { error } = await db.from("duofin_v2_households").update({ invite_code: nextCode }).eq("id", householdId);
+  if (error) return toast(`Erro ao trocar codigo: ${error.message}`);
+  inviteCode = nextCode;
+  localStorage.setItem("duofinV2InviteCode", inviteCode);
+  showInviteCode = true;
+  commit("Codigo de convite atualizado.", "settings");
+}
+
 async function saveState(showToast = false) {
   state = normalize(state);
   localStorage.setItem("duofinV2Local", JSON.stringify(state));
-  const { error } = await db.from("duofin_v2_states").upsert({ household_id: householdId, data: state, updated_at: new Date().toISOString() });
+  const { error } = await db.from("duofin_v2_states").upsert({ household_id: householdId, data: state, updated_at: new Date().toISOString() }, { onConflict: "household_id" });
   if (error) return toast(`Erro ao salvar: ${error.message}`);
   lastSaved = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
   renderHeaderStatus();
   if (showToast) toast("Salvo.");
 }
 
-function commit(message) {
+function addNotification(message, view = activeView) {
+  state.notifications = state.notifications || [];
+  state.notifications.unshift({
+    id: crypto.randomUUID(),
+    message,
+    view,
+    createdAt: new Date().toISOString(),
+    readBy: user?.id ? [user.id] : []
+  });
+  state.notifications = state.notifications.slice(0, 30);
+}
+
+function commit(message, view = activeView) {
   state = normalize(state);
+  addNotification(message, view);
   render();
-  saveState(false);
+  saveState(true);
   toast(message);
 }
 
 function render() {
   unlockApp(true);
   document.body.dataset.view = activeView;
+  updatePrivacyButtons();
   renderHeaderStatus();
   renderPeriodSelects();
   renderHome();
@@ -479,8 +579,9 @@ function summary() {
   const income = total(entries.filter((entry) => entry.type === "income")) + monthSalary();
   const expense = total(entries.filter((entry) => entry.type === "expense" && entry.status === "paid"));
   const cards = total(state.cards.map((card) => ({ value: cardInvoice(card.name).amount })));
+  const cardsForBalance = total(state.cards.filter(cardAffectsBalance).map((card) => ({ value: cardInvoice(card.name).open })));
   const fixedPaid = total(state.fixedBills.filter((bill) => fixedIsPaid(bill)));
-  return { income, expense, cards, fixedPaid, balance: income - expense - cards - fixedPaid };
+  return { income, expense, cards, cardsForBalance, fixedPaid, balance: income - expense - cardsForBalance - fixedPaid };
 }
 
 function upcomingBills() {
@@ -522,6 +623,11 @@ function setupSteps() {
   ];
 }
 
+function unreadNotifications() {
+  const uid = user?.id || "";
+  return (state.notifications || []).filter((item) => !uid || !(item.readBy || []).includes(uid)).slice(0, 5);
+}
+
 function renderHome() {
   const data = summary();
   const mood = data.balance < 0 ? { label: "Atencao", text: "Saldo negativo. Vale revisar os gastos.", face: ":(" } : { label: "OK", text: "Vocês estão indo bem esse mês.", face: ":)" };
@@ -554,13 +660,14 @@ function renderHome() {
   const data = summary();
   const tight = data.income > 0 && data.balance <= data.income * 0.12;
   const mood = data.balance < 0
-    ? { label: "Atencao", text: "Saldo negativo. Vale revisar os gastos.", face: ":(", tone: "bad" }
+    ? { label: "Atencao", text: "Saldo negativo. Vale revisar os gastos.", tone: "bad" }
     : tight
-      ? { label: "Apertado", text: "O mes esta apertado. Segurem os extras.", face: ":|", tone: "warn" }
-      : { label: "OK", text: "Voces estao indo bem esse mes.", face: ":)", tone: "good" };
+      ? { label: "Apertado", text: "O mes esta apertado. Segurem os extras.", tone: "warn" }
+      : { label: "OK", text: "Voces estao indo bem esse mes.", tone: "good" };
   const bills = upcomingBills();
   const invoices = invoiceCards();
   const steps = setupSteps();
+  const alerts = unreadNotifications();
   const pendingSteps = steps.filter((step) => !step.done);
   $("#home").innerHTML = `
     <section class="hero-card wide">
@@ -568,7 +675,11 @@ function renderHome() {
       <h2>${brl(data.balance)}</h2>
       <p>${mood.text}</p>
       <div class="couple ${mood.tone}">
-        <div class="faces"><b>${mood.face}</b><b>${mood.face}</b></div>
+        <div class="couple-people">
+          <span class="person one"><i></i></span>
+          <span class="heart"></span>
+          <span class="person two"><i></i></span>
+        </div>
         <small>${mood.label}</small>
       </div>
     </section>
@@ -584,6 +695,19 @@ function renderHome() {
       ${metric("Cartoes", data.cards, "cards")}
       ${metric("Saldo", data.balance, "statement")}
     </section>
+    ${alerts.length ? `
+      <section class="panel wide">
+        <h2>Notificacoes</h2>
+        <div class="notification-list">
+          ${alerts.map((item) => `
+            <button class="notification-item" data-read-notification="${item.id}" type="button">
+              <strong>${item.message}</strong>
+              <span>${new Date(item.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
+            </button>
+          `).join("")}
+        </div>
+      </section>
+    ` : ""}
     ${pendingSteps.length ? `
       <section class="panel wide">
         <h2>Primeiros passos</h2>
@@ -603,7 +727,7 @@ function renderHome() {
     </section>
     <section class="panel">
       <h2>Faturas do mes</h2>
-      ${invoices.length ? invoices.map(({ card, invoice }) => row(card.name, `Vence dia ${card.dueDay} - aberto ${brl(invoice.open)}`, invoice.amount, `<button class="tiny ghost" data-go="cards" type="button">Abrir</button>`)).join("") : empty("Nenhuma fatura no mes")}
+      ${invoices.length ? invoices.map(({ card, invoice }) => row(card.name, `Vence dia ${card.dueDay} - aberto ${brl(invoice.open)}`, invoice.amount, `<button class="tiny ghost" data-pay-card="${card.name}" type="button">Pagar</button><button class="tiny ghost" data-go="cards" type="button">Abrir</button>`)).join("") : empty("Nenhuma fatura no mes")}
     </section>
   `;
 }
@@ -614,23 +738,26 @@ function metric(label, value, go = "") {
 
 function renderLaunch() {
   if (editingPurchaseId) launchType = "expense";
+  const editingEntry = state.entries.find((entry) => entry.id === editingEntryId);
+  if (editingEntry) launchType = editingEntry.type;
   const isIncome = launchType === "income";
   const editingPurchase = state.cardPurchases.find((purchase) => purchase.id === editingPurchaseId);
   $("#launch").innerHTML = `
     <section class="form-card wide">
-      <h2 class="form-title">Lancamentos</h2>
+      <h2 class="form-title">${editingEntry ? "Editar lancamento" : "Lancamentos"}</h2>
       <div class="tabs">
         <button class="${isIncome ? "active" : ""}" data-launch-type="income" type="button">Entrada</button>
         <button class="${!isIncome ? "active" : ""}" data-launch-type="expense" type="button">Saida</button>
       </div>
       <form id="entry-form" class="form-card">
-        ${input("value", "Valor", "number", "", "step=\"0.01\" inputmode=\"decimal\" required")}
-        ${input("date", "Data", "date", today(), "required")}
-        ${select("category", isIncome ? "Origem" : "Categoria", isIncome ? state.categoriesIncome : state.categoriesExpense)}
-        ${input("description", "Descricao", "text", "", "required")}
-        ${select("person", "Quem?", people())}
-        ${!isIncome ? select("status", "Situacao", [["paid", "Pago"], ["pending", "Pendente"]]) : ""}
-        <button class="primary" type="submit">Salvar lancamento</button>
+        ${input("value", "Valor", "number", editingEntry?.value || "", "step=\"0.01\" inputmode=\"decimal\" required")}
+        ${input("date", "Data", "date", editingEntry?.date || today(), "required")}
+        ${select("category", isIncome ? "Origem" : "Categoria", isIncome ? state.categoriesIncome : state.categoriesExpense, editingEntry?.category || "")}
+        ${input("description", "Descricao", "text", editingEntry?.description || "", "required")}
+        ${select("person", "Quem?", people(), editingEntry?.person || "")}
+        ${!isIncome ? select("status", "Situacao", [["paid", "Pago"], ["pending", "Pendente"]], editingEntry?.status || "paid") : ""}
+        <button class="primary" type="submit">${editingEntry ? "Salvar alteracoes" : "Salvar lancamento"}</button>
+        ${editingEntry ? `<button class="ghost" type="button" data-cancel-entry-edit>Cancelar edicao</button>` : ""}
       </form>
     </section>
 
@@ -655,8 +782,8 @@ function addEntry(form) {
   const value = Number(String(data.value || "").replace(",", "."));
   if (!Number.isFinite(value) || value <= 0) return toast("Informe um valor valido.");
   const info = dateInfo(data.date);
-  state.entries.unshift({
-    id: crypto.randomUUID(),
+  const nextEntry = {
+    id: editingEntryId || crypto.randomUUID(),
     type: launchType,
     date: data.date,
     month: info.month,
@@ -666,7 +793,14 @@ function addEntry(form) {
     value,
     person: data.person,
     status: launchType === "income" ? "paid" : data.status
-  });
+  };
+  if (editingEntryId) {
+    state.entries = state.entries.map((entry) => entry.id === editingEntryId ? nextEntry : entry);
+    editingEntryId = "";
+    commit("Lancamento atualizado.", "statement");
+    return;
+  }
+  state.entries.unshift(nextEntry);
   commit("Lancamento salvo.");
 }
 
@@ -785,33 +919,37 @@ function addCard(form) {
 }
 
 function renderFixed() {
+  const editingFixed = state.fixedBills.find((bill) => bill.id === editingFixedId);
+  const editingCardFixed = state.cardFixedBills.find((bill) => bill.id === editingCardFixedId);
   $("#fixed").innerHTML = `
     <section class="form-card wide">
-      <h2 class="form-title">Despesa fixa</h2>
+      <h2 class="form-title">${editingFixed ? "Editar despesa fixa" : "Despesa fixa"}</h2>
       <form id="fixed-form" class="form-card">
-        ${input("description", "Nome", "text", "", "required")}
-        ${input("value", "Valor", "number", "", "step=\"0.01\" inputmode=\"decimal\" required")}
-        ${input("dueDay", "Vence dia", "number", "10", "min=\"1\" max=\"31\" required")}
-        ${select("category", "Categoria", state.categoriesExpense)}
-        ${select("person", "Responsavel", people())}
-        <button class="primary" type="submit">Salvar despesa fixa</button>
+        ${input("description", "Nome", "text", editingFixed?.description || "", "required")}
+        ${input("value", "Valor", "number", editingFixed?.value || "", "step=\"0.01\" inputmode=\"decimal\" required")}
+        ${input("dueDay", "Vence dia", "number", editingFixed?.dueDay || "10", "min=\"1\" max=\"31\" required")}
+        ${select("category", "Categoria", state.categoriesExpense, editingFixed?.category || "")}
+        ${select("person", "Responsavel", people(), editingFixed?.person || "")}
+        <button class="primary" type="submit">${editingFixed ? "Salvar alteracoes" : "Salvar despesa fixa"}</button>
+        ${editingFixed ? `<button class="ghost" type="button" data-cancel-fixed-edit>Cancelar edicao</button>` : ""}
       </form>
     </section>
     <section class="form-card wide">
-      <h2 class="form-title">Fixo no cartao</h2>
+      <h2 class="form-title">${editingCardFixed ? "Editar fixo no cartao" : "Fixo no cartao"}</h2>
       <form id="card-fixed-form" class="form-card">
-        ${state.cards.length ? select("card", "Cartao", cardNames()) : `<div class="empty"><strong>Nenhum cartao cadastrado</strong><span>Cadastre um cartao primeiro.</span></div>`}
-        ${input("description", "Nome", "text", "", "required")}
-        ${input("value", "Valor", "number", "", "step=\"0.01\" inputmode=\"decimal\" required")}
-        ${input("chargeDay", "Dia da cobranca", "number", "1", "min=\"1\" max=\"31\" required")}
-        ${select("category", "Categoria", state.categoriesExpense)}
-        <button class="primary" type="submit" ${state.cards.length ? "" : "disabled"}>Salvar fixo no cartao</button>
+        ${state.cards.length ? select("card", "Cartao", cardNames(), editingCardFixed?.card || "") : `<div class="empty"><strong>Nenhum cartao cadastrado</strong><span>Cadastre um cartao primeiro.</span></div>`}
+        ${input("description", "Nome", "text", editingCardFixed?.description || "", "required")}
+        ${input("value", "Valor", "number", editingCardFixed?.value || "", "step=\"0.01\" inputmode=\"decimal\" required")}
+        ${input("chargeDay", "Dia da cobranca", "number", editingCardFixed?.chargeDay || "1", "min=\"1\" max=\"31\" required")}
+        ${select("category", "Categoria", state.categoriesExpense, editingCardFixed?.category || "")}
+        <button class="primary" type="submit" ${state.cards.length ? "" : "disabled"}>${editingCardFixed ? "Salvar alteracoes" : "Salvar fixo no cartao"}</button>
+        ${editingCardFixed ? `<button class="ghost" type="button" data-cancel-card-fixed-edit>Cancelar edicao</button>` : ""}
       </form>
     </section>
     <section class="panel wide">
       <h2>Fixos cadastrados</h2>
-      ${state.fixedBills.length ? state.fixedBills.map((bill) => row(bill.description, `${bill.category} - vence dia ${bill.dueDay} - ${fixedIsPaid(bill) ? "Pago" : "Pendente"}`, bill.value, `<button class="tiny ghost" data-toggle-fixed="${bill.id}">${fixedIsPaid(bill) ? "Reabrir" : "Pago"}</button>`)).join("") : empty("Nenhuma despesa fixa")}
-      ${state.cardFixedBills.length ? `<h2>Fixos no cartao</h2>${state.cardFixedBills.map((bill) => row(bill.description, `${bill.card} - dia ${bill.chargeDay}`, bill.value)).join("")}` : ""}
+      ${state.fixedBills.length ? state.fixedBills.map((bill) => row(bill.description, `${bill.category} - vence dia ${bill.dueDay} - ${fixedIsPaid(bill) ? "Pago" : "Pendente"}`, bill.value, `<button class="tiny ghost" data-edit-fixed="${bill.id}">Editar</button><button class="tiny ghost" data-toggle-fixed="${bill.id}">${fixedIsPaid(bill) ? "Reabrir" : "Pago"}</button>`)).join("") : empty("Nenhuma despesa fixa")}
+      ${state.cardFixedBills.length ? `<h2>Fixos no cartao</h2>${state.cardFixedBills.map((bill) => row(bill.description, `${bill.card} - dia ${bill.chargeDay}`, bill.value, `<button class="tiny ghost" data-edit-card-fixed="${bill.id}">Editar</button>`)).join("")}` : ""}
     </section>
   `;
 }
@@ -820,16 +958,23 @@ function addFixed(form) {
   const data = Object.fromEntries(new FormData(form));
   const value = Number(String(data.value || "").replace(",", "."));
   if (!data.description || !Number.isFinite(value) || value <= 0) return toast("Preencha a despesa fixa.");
-  state.fixedBills.unshift({
-    id: crypto.randomUUID(),
+  const nextFixed = {
+    id: editingFixedId || crypto.randomUUID(),
     description: data.description,
     category: data.category,
     person: data.person,
     value,
     dueDay: Number(data.dueDay || 1),
-    paidPeriods: [],
+    paidPeriods: state.fixedBills.find((bill) => bill.id === editingFixedId)?.paidPeriods || [],
     active: true
-  });
+  };
+  if (editingFixedId) {
+    state.fixedBills = state.fixedBills.map((bill) => bill.id === editingFixedId ? nextFixed : bill);
+    editingFixedId = "";
+    commit("Despesa fixa atualizada.", "fixed");
+    return;
+  }
+  state.fixedBills.unshift(nextFixed);
   commit("Despesa fixa salva.");
 }
 
@@ -838,26 +983,42 @@ function addCardFixed(form) {
   const value = Number(String(data.value || "").replace(",", "."));
   if (!state.cards.length) return toast("Cadastre um cartao primeiro.");
   if (!data.description || !Number.isFinite(value) || value <= 0) return toast("Preencha o fixo no cartao.");
-  state.cardFixedBills.unshift({
-    id: crypto.randomUUID(),
+  const nextCardFixed = {
+    id: editingCardFixedId || crypto.randomUUID(),
     card: data.card,
     description: data.description,
     category: data.category,
     value,
     chargeDay: Number(data.chargeDay || 1),
-    paidPeriods: [],
+    paidPeriods: state.cardFixedBills.find((bill) => bill.id === editingCardFixedId)?.paidPeriods || [],
     active: true
-  });
+  };
+  if (editingCardFixedId) {
+    state.cardFixedBills = state.cardFixedBills.map((bill) => bill.id === editingCardFixedId ? nextCardFixed : bill);
+    editingCardFixedId = "";
+    commit("Fixo no cartao atualizado.", "fixed");
+    return;
+  }
+  state.cardFixedBills.unshift(nextCardFixed);
   commit("Fixo no cartao salvo.");
 }
 
 function renderStatement() {
   const rows = [
-    ...currentEntries().map((entry) => ({ date: entry.date, title: entry.description, detail: `${entry.type === "income" ? "Entrada" : "Saida"} - ${entry.category}`, value: entry.value })),
-    ...state.cards.flatMap((card) => cardItems(card.name).map((item) => ({ date: item.date, title: item.description, detail: `Cartao - ${card.name}`, value: item.value }))),
-    ...state.fixedBills.map((bill) => ({ date: dateForDay(bill.dueDay, state.selectedMonth, state.selectedYear), title: bill.description, detail: `Fixo - ${fixedIsPaid(bill) ? "Pago" : "Pendente"}`, value: bill.value }))
+    ...currentEntries().map((entry) => ({ ...entry, source: "entry", title: entry.description, detail: `${entry.type === "income" ? "Entrada" : "Saida"} - ${entry.category}` })),
+    ...state.cards.flatMap((card) => cardItems(card.name).map((item) => ({ ...item, source: item.source, title: item.description, detail: `Cartao - ${card.name}` }))),
+    ...state.fixedBills.map((bill) => ({ ...bill, source: "fixed", date: dateForDay(bill.dueDay, state.selectedMonth, state.selectedYear), title: bill.description, detail: `Fixo - ${fixedIsPaid(bill) ? "Pago" : "Pendente"}` }))
   ].sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  $("#statement").innerHTML = `<section class="panel wide"><h2>Extrato do mes</h2>${rows.length ? rows.map((item) => row(item.title, `${dateFmt.format(new Date(`${item.date}T00:00:00Z`))} - ${item.detail}`, item.value)).join("") : empty("Nada no extrato")}</section>`;
+  $("#statement").innerHTML = `<section class="panel wide"><h2>Extrato do mes</h2>${rows.length ? rows.map(statementRow).join("") : empty("Nada no extrato")}</section>`;
+}
+
+function statementRow(item) {
+  const date = dateFmt.format(new Date(`${item.date}T00:00:00Z`));
+  let action = "";
+  if (item.source === "entry") action = `<button class="tiny ghost" data-edit-entry="${item.id}">Editar</button><button class="tiny danger" data-delete-entry="${item.id}">Excluir</button>`;
+  if (item.source === "purchase") action = `<button class="tiny ghost" data-edit-purchase="${item.id}">Editar</button>`;
+  if (item.source === "fixed") action = `<button class="tiny ghost" data-edit-fixed="${item.id}">Editar</button>`;
+  return row(item.title, `${date} - ${item.detail}`, item.value, action);
 }
 
 function renderSettings() {
@@ -901,6 +1062,7 @@ function renderSettings() {
           <div class="actions">
             <button class="tiny ghost" type="button" data-toggle-code>${showInviteCode ? "Ocultar" : "Mostrar codigo"}</button>
             <button class="tiny ghost" type="button" data-copy-code>Copiar</button>
+            <button class="tiny ghost" type="button" data-change-code>Trocar codigo</button>
           </div>
         </div>
         <div class="setting-card">
@@ -1064,8 +1226,24 @@ async function onClick(event) {
     navigator.clipboard?.writeText(inviteCode).then(() => toast("Codigo copiado.")).catch(() => toast("Nao foi possivel copiar."));
     return;
   }
+  if (event.target.closest("[data-change-code]")) {
+    await changeInviteCode();
+    return;
+  }
   if (event.target.closest("[data-export-backup]")) {
     exportBackup();
+    return;
+  }
+  const readNotification = event.target.closest("[data-read-notification]");
+  if (readNotification) {
+    const note = state.notifications.find((item) => item.id === readNotification.dataset.readNotification);
+    if (!note) return;
+    const readBy = new Set(note.readBy || []);
+    if (user?.id) readBy.add(user.id);
+    state.notifications = state.notifications.map((item) => item.id === note.id ? { ...item, readBy: Array.from(readBy) } : item);
+    saveState(false);
+    setView(note.view || "home");
+    render();
     return;
   }
   const payCard = event.target.closest("[data-pay-card]");
@@ -1073,8 +1251,31 @@ async function onClick(event) {
     const card = payCard.dataset.payCard;
     const invoice = cardInvoice(card);
     if (invoice.open <= 0) return toast("Fatura ja esta paga.");
-    state.cardPayments.unshift({ id: crypto.randomUUID(), card, month: state.selectedMonth, year: state.selectedYear, value: invoice.open, date: today() });
+    const typed = prompt(`Quanto deseja pagar/adiantar? Valor em aberto: ${money.format(invoice.open)}`, String(invoice.open.toFixed(2)).replace(".", ","));
+    if (typed === null) return;
+    const value = Number(String(typed || "").replace(",", "."));
+    if (!Number.isFinite(value) || value <= 0) return toast("Informe um valor valido.");
+    state.cardPayments.unshift({ id: crypto.randomUUID(), card, month: state.selectedMonth, year: state.selectedYear, value: Math.min(value, invoice.open), date: today() });
     commit("Pagamento da fatura salvo.");
+  }
+  const editEntry = event.target.closest("[data-edit-entry]");
+  if (editEntry) {
+    editingEntryId = editEntry.dataset.editEntry;
+    renderLaunch();
+    setView("launch");
+    return;
+  }
+  if (event.target.closest("[data-cancel-entry-edit]")) {
+    editingEntryId = "";
+    renderLaunch();
+    return;
+  }
+  const deleteEntry = event.target.closest("[data-delete-entry]");
+  if (deleteEntry && confirm("Excluir lancamento?")) {
+    state.entries = state.entries.filter((entry) => entry.id !== deleteEntry.dataset.deleteEntry);
+    if (editingEntryId === deleteEntry.dataset.deleteEntry) editingEntryId = "";
+    commit("Lancamento excluido.", "statement");
+    return;
   }
   const editCard = event.target.closest("[data-edit-card]");
   if (editCard) {
@@ -1112,14 +1313,32 @@ async function onClick(event) {
     state.fixedBills = state.fixedBills.map((bill) => bill.id === toggleFixed.dataset.toggleFixed ? togglePeriod(bill) : bill);
     commit("Status atualizado.");
   }
+  const editFixed = event.target.closest("[data-edit-fixed]");
+  if (editFixed) {
+    editingFixedId = editFixed.dataset.editFixed;
+    renderFixed();
+    setView("fixed");
+    return;
+  }
+  if (event.target.closest("[data-cancel-fixed-edit]")) {
+    editingFixedId = "";
+    renderFixed();
+    return;
+  }
+  const editCardFixed = event.target.closest("[data-edit-card-fixed]");
+  if (editCardFixed) {
+    editingCardFixedId = editCardFixed.dataset.editCardFixed;
+    renderFixed();
+    setView("fixed");
+    return;
+  }
+  if (event.target.closest("[data-cancel-card-fixed-edit]")) {
+    editingCardFixedId = "";
+    renderFixed();
+    return;
+  }
   if (event.target.closest("[data-signout]")) {
-    await db.auth.signOut();
-    localStorage.removeItem("duofinV2HouseholdId");
-    localStorage.removeItem("duofinV2InviteCode");
-    householdId = "";
-    inviteCode = "";
-    user = null;
-    renderAuth();
+    await hardSignOut("Voce saiu da conta.");
   }
 }
 
