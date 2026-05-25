@@ -255,6 +255,16 @@ function fixedIsPaid(bill) {
 async function init() {
   bindEvents();
   if (!db) return renderAuth("Nao foi possivel carregar o Supabase.");
+  const params = new URLSearchParams(location.search);
+  if (params.has("sair") || params.has("login") || params.has("logout")) {
+    await db.auth.signOut();
+    localStorage.removeItem("duofinV2HouseholdId");
+    localStorage.removeItem("duofinV2InviteCode");
+    householdId = "";
+    inviteCode = "";
+    history.replaceState({}, document.title, location.pathname);
+    return renderAuth("Entre novamente para continuar.");
+  }
   const { data } = await db.auth.getSession();
   user = data.session?.user || null;
   db.auth.onAuthStateChange(async (_event, session) => {
